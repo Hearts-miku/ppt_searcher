@@ -1,0 +1,6 @@
+{
+  "name": "PPT智能检索器",
+  "description": "一个支持本地运行的PPT演示文稿智能查询器，通过自然语言和关键词快速检索具体幻灯片页面内容并输出预览，支持一键打开对应PPT页的所在目录位置。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
