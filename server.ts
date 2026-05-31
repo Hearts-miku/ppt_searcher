@@ -16,7 +16,7 @@ import {
 import { computeEmbedding, askAI } from "./server/modelAdapter";
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 // Middleware
 app.use(express.json());
@@ -433,7 +433,9 @@ async function startExpressServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    const distPath = fs.existsSync(path.join(__dirname, "index.html"))
+      ? __dirname
+      : path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));

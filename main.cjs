@@ -26,16 +26,17 @@ function findFreePort(port, cb) {
 }
 
 function startBackendServer(port) {
-  const serverPath = path.join(__dirname, 'dist', 'server.cjs');
+  // 把端口和生产标记注入到当进程的全局 env 中，让内联加载的 Express 直接接手并侦听相应接口
+  process.env.PORT = port;
+  process.env.NODE_ENV = 'production';
   
-  // 在后台静默 spawn 运行我们编译出的 Node.js 后端 cjs 包
-  serverProcess = spawn('node', [serverPath], {
-    env: { ...process.env, PORT: port, NODE_ENV: 'production' },
-    windowsHide: true // 极其关键：防止在 Windows 系统中运行时弹出黑乎乎的 CMD 命令行窗口
-  });
-
-  serverProcess.stdout.on('data', (data) => console.log(`[Backend]: ${data}`));
-  serverProcess.stderr.on('data', (data) => console.error(`[Backend-Err]: ${data}`));
+  try {
+    const serverPath = path.join(__dirname, 'dist', 'server.cjs');
+    require(serverPath);
+    console.log(`[Backend-Embed]: Express backend successfully embedded and listening on port ${port}`);
+  } catch (err) {
+    console.error("[Backend-Embed-Err]: Failed to boot embedded backend server:", err);
+  }
 }
 
 function createWindow(port) {
@@ -50,7 +51,7 @@ function createWindow(port) {
     }
   });
 
-  // 等待 Express 服务器温热建立连通后，加载对应本地服务页面
+  // 等待 Express 服务器温热建立连通后，加载对应页面 (因为是进程中直接启动，1.2s 的缓冲已经足够宽裕)
   setTimeout(() => {
     mainWindow.loadURL(`http://localhost:${port}`);
   }, 1200);
@@ -72,11 +73,8 @@ app.on('ready', () => {
   });
 });
 
-// 安全垃圾回收：当 Electron 所有窗口关闭时，彻底杀掉 Express 后门常驻进程，保障极低能耗
+// 当 Electron 所有窗口关闭时，退出应用 (进程释放后进程内部 Express 会全部释放，不会有常驻遗存)
 app.on('window-all-closed', () => {
-  if (serverProcess) {
-    serverProcess.kill();
-  }
   if (process.platform !== 'darwin') {
     app.quit();
   }
