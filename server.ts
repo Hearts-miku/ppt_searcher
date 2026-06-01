@@ -1,7 +1,6 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
-import { createServer as createViteServer } from "vite";
 import { loadConfig, saveConfig } from "./server/configStore";
 import { loadDatabase, getDatabase, removeDocument } from "./server/db";
 import { prepopulateSampleFolder } from "./server/parser";
@@ -427,6 +426,8 @@ end tell'
 // Serve frontend based on mode
 async function startExpressServer() {
   if (process.env.NODE_ENV !== "production") {
+    const viteKey = "vite";
+    const { createServer: createViteServer } = await import(viteKey);
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
