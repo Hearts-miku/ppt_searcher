@@ -24,8 +24,15 @@ export default function FileTree({ monitoredFolders, indexingStatus, onMonitored
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: pathLoad })
     })
-      .then(res => {
-        if (!res.ok) throw new Error("无法读取该硬盘路径下的内容，权限被拒绝或路径不合法");
+      .then(async res => {
+        if (!res.ok) {
+          try {
+            const errData = await res.json();
+            throw new Error(errData.error || `服务器响应异常 (Http ${res.status})`);
+          } catch {
+            throw new Error(`读取该硬盘路径失败 (Http ${res.status})`);
+          }
+        }
         return res.json();
       })
       .then(data => {

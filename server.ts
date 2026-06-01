@@ -147,31 +147,39 @@ app.post("/api/fs/list", (req, res) => {
     const rawList = fs.readdirSync(targetPath, { withFileTypes: true });
     const cfg = loadConfig();
 
-    const items = rawList.map(item => {
-      const fullPath = path.resolve(targetPath, item.name);
+    const items: any[] = [];
+    for (const item of rawList) {
       const isDir = item.isDirectory();
+      const isPpt = item.name.toLocaleLowerCase().endsWith(".pptx") || item.name.toLocaleLowerCase().endsWith(".ppt");
+      
+      // Filter out non-directory and non-ppt files early to avoid running statSync on irrelevant system/hidden files
+      if (!isDir && !isPpt) {
+        continue;
+      }
 
-      let details: any = {
+      const fullPath = path.resolve(targetPath, item.name);
+      const details: any = {
         name: item.name,
         type: isDir ? "directory" : "file",
         absolutePath: fullPath,
       };
 
       if (!isDir) {
-        const itemStat = fs.statSync(fullPath);
-        details.size = `${(itemStat.size / (1024 * 1024)).toFixed(2)} MB`;
-        details.lastModified = itemStat.mtime.toLocaleDateString();
+        try {
+          const itemStat = fs.statSync(fullPath);
+          details.size = `${(itemStat.size / (1024 * 1024)).toFixed(2)} MB`;
+          details.lastModified = itemStat.mtime.toLocaleDateString();
+        } catch (err) {
+          details.size = "未知大小";
+          details.lastModified = "无法获取";
+        }
       } else {
         // Is this path already monitored or sub-monitored?
         details.isMonitored = cfg.monitoredFolders.some(mf => fullPath.startsWith(mf) || mf.startsWith(fullPath));
       }
 
-      return details;
-    }).filter(i => 
-      i.type === "directory" || 
-      i.name.endsWith(".pptx") || 
-      i.name.endsWith(".ppt")
-    );
+      items.push(details);
+    }
 
     res.json({
       currentPath: path.resolve(targetPath),
