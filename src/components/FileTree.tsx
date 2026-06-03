@@ -15,9 +15,17 @@ export default function FileTree({ monitoredFolders, indexingStatus, onMonitored
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Keep track of currentPath in Ref to reload exact subfolder during live syncs
+  const currentPathRef = React.useRef(currentPath);
+  useEffect(() => {
+    currentPathRef.current = currentPath;
+  }, [currentPath]);
+
   // Load processes list
-  const loadPath = (pathLoad?: string) => {
-    setLoading(true);
+  const loadPath = (pathLoad?: string, silent = false) => {
+    if (!silent) {
+      setLoading(true);
+    }
     setError(null);
     fetch("/api/fs/list", {
       method: "POST",
@@ -44,13 +52,15 @@ export default function FileTree({ monitoredFolders, indexingStatus, onMonitored
         setError(err.message);
       })
       .finally(() => {
-        setLoading(false);
+        if (!silent) {
+          setLoading(false);
+        }
       });
   };
 
   useEffect(() => {
-    // Initial fetch processcwd
-    loadPath();
+    // Refresh currently browsed folder silently in background when monitoredFolders list polls
+    loadPath(currentPathRef.current || undefined, true);
   }, [monitoredFolders]);
 
   const handleAddMonitor = async (pathToAdd: string) => {

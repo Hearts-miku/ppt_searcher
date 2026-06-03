@@ -147,6 +147,74 @@ export async function startupAutoLoad(): Promise<void> {
       console.warn(`Configured monitored directory no longer exists on disk: ${folder}. Skipping.`);
     }
   }
+
+  // Start periodic background auto-sync & reconciliation
+  startPeriodicSync();
+}
+
+// Reconcile database records with actual physical files on disk
+export async function reconcileMonitoredFolders(): Promise<void> {
+  const cfg = loadConfig();
+  const db = getDatabase();
+  
+  for (const folder of cfg.monitoredFolders) {
+    if (!fs.existsSync(folder)) {
+      continue;
+    }
+    
+    // 1. Scan actual files on physical disk
+    const physicalFiles = scanFolderRecursive(folder);
+    const physicalFilesSet = new Set(physicalFiles);
+
+    // 2. Discover newly added or modified files (hash changed or missing from DB)
+    for (const file of physicalFiles) {
+      try {
+        if (!fs.existsSync(file)) continue;
+        const fileHash = generateFileHash(file);
+        const existing = db.documents[file];
+        
+        if (!existing || existing.sha256 !== fileHash) {
+          // Double check to avoid parallel scanning of the exact same file
+          if (!indexingProgress[file]) {
+            console.log(`[Auto-Sync] Found new/modified ppt file: ${path.basename(file)}. Indexing...`);
+            indexSingleFile(file).catch(err => {
+              console.error(`[Auto-Sync] Async index failed for ${file}:`, err);
+            });
+          }
+        }
+      } catch (err) {
+        console.error(`[Auto-Sync] Error checking individual file: ${file}`, err);
+      }
+    }
+
+    // 3. Clean up deleted files (files in DB starting with the folder path but no longer on disk)
+    const dbPaths = Object.keys(db.documents);
+    for (const dbPath of dbPaths) {
+      if (dbPath.startsWith(folder)) {
+        if (!physicalFilesSet.has(dbPath) || !fs.existsSync(dbPath)) {
+          console.log(`[Auto-Sync] Detected deleted file in monitored directory: ${path.basename(dbPath)}. Removing from indices...`);
+          removeDocument(dbPath);
+        }
+      }
+    }
+  }
+}
+
+// Background periodic sync timer
+let syncInterval: NodeJS.Timeout | null = null;
+
+export function startPeriodicSync(intervalMs = 8000) {
+  if (syncInterval) {
+    clearInterval(syncInterval);
+  }
+  syncInterval = setInterval(async () => {
+    try {
+      await reconcileMonitoredFolders();
+    } catch (err) {
+      console.error("[Periodic Auto-Sync Error]", err);
+    }
+  }, intervalMs);
+  console.log(`[Auto-Sync] Background reconciliation service started (interval: ${intervalMs}ms)`);
 }
 
 // Debounced file indexes to avoid multi-write event lockouts

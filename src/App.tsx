@@ -61,7 +61,7 @@ export default function App() {
       .catch(err => console.error("Error loading settings:", err));
   };
 
-  // Poll active background vectorizer pipelines every 2.5 seconds
+  // Poll active background vectorizer pipelines and monitored folders every 2.5 seconds
   useEffect(() => {
     loadMonitoredFolders();
     loadSettings();
@@ -73,6 +73,13 @@ export default function App() {
           if (data) setIndexingStatus(data);
         })
         .catch(err => console.error("Error fetching indexing progress:", err));
+
+      fetch("/api/fs/monitored")
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) setMonitoredFolders(data);
+        })
+        .catch(err => console.error("Error fetching monitored folders list:", err));
     }, 2500);
 
     return () => clearInterval(interval);
