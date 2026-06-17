@@ -84,6 +84,11 @@ export async function indexSingleFile(filePath: string, force = false): Promise<
       const slideId = `${filePath}#${s.slideIndex}`;
       const textToEmbed = `Title: ${s.title}\nContent: ${s.text}\nPresenterNotes: ${s.note}`;
       
+      // Gentle pacing delay to respect Gemini RPM rate limit
+      if (config.settings.embeddingMode === "online") {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
       // Compute vector
       const vector = await computeEmbedding(textToEmbed, config.settings);
       updateSlideVector(slideId, vector);
@@ -187,10 +192,12 @@ export async function reconcileMonitoredFolders(): Promise<void> {
       }
     }
 
-    // 3. Clean up deleted files (files in DB starting with the folder path but no longer on disk)
+    // 3. Clean up deleted files (files in DB starting with the folder path but no longer on disk) - with cross-platform slash matching
     const dbPaths = Object.keys(db.documents);
     for (const dbPath of dbPaths) {
-      if (dbPath.startsWith(folder)) {
+      const stdDbPath = dbPath.replace(/\\/g, "/").toLowerCase();
+      const stdFolder = folder.replace(/\\/g, "/").toLowerCase();
+      if (stdDbPath.startsWith(stdFolder)) {
         if (!physicalFilesSet.has(dbPath) || !fs.existsSync(dbPath)) {
           console.log(`[Auto-Sync] Detected deleted file in monitored directory: ${path.basename(dbPath)}. Removing from indices...`);
           removeDocument(dbPath);

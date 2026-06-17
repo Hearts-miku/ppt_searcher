@@ -115,10 +115,12 @@ app.get("/api/fs/monitored", (req, res) => {
   const db = getDatabase();
 
   const monitoredInfo = cfg.monitoredFolders.map(folderPath => {
-    // Count documents belonging to this parent path
-    const filesCount = Object.keys(db.documents).filter(filePath => 
-      filePath.startsWith(folderPath)
-    ).length;
+    // Count documents belonging to this parent path (standardized for cross-platform backslashes/casing)
+    const filesCount = Object.keys(db.documents).filter(filePath => {
+      const stdFilePath = filePath.replace(/\\/g, "/").toLowerCase();
+      const stdFolderPath = folderPath.replace(/\\/g, "/").toLowerCase();
+      return stdFilePath.startsWith(stdFolderPath);
+    }).length;
 
     return {
       path: folderPath,
@@ -174,8 +176,12 @@ app.post("/api/fs/list", (req, res) => {
           details.lastModified = "无法获取";
         }
       } else {
-        // Is this path already monitored or sub-monitored?
-        details.isMonitored = cfg.monitoredFolders.some(mf => fullPath.startsWith(mf) || mf.startsWith(fullPath));
+        // Is this path already monitored or sub-monitored? (standardized for cross-platform slashes/casing)
+        details.isMonitored = cfg.monitoredFolders.some(mf => {
+          const stdFullPath = fullPath.replace(/\\/g, "/").toLowerCase();
+          const stdMf = mf.replace(/\\/g, "/").toLowerCase();
+          return stdFullPath.startsWith(stdMf) || stdMf.startsWith(stdFullPath);
+        });
       }
 
       items.push(details);
@@ -258,9 +264,13 @@ app.post("/api/fs/remove-root", (req, res) => {
   // Halt active file watcher
   stopWatcherForFolder(resolved);
 
-  // Optional: clear file indices from the database so metadata matches physical workspace
+  // Optional: clear file indices from the database so metadata matches physical workspace (standardized for cross-platform slashes/casing)
   const db = getDatabase();
-  const docPathsToRemove = Object.keys(db.documents).filter(dp => dp.startsWith(resolved));
+  const docPathsToRemove = Object.keys(db.documents).filter(dp => {
+    const stdDp = dp.replace(/\\/g, "/").toLowerCase();
+    const stdResolved = resolved.replace(/\\/g, "/").toLowerCase();
+    return stdDp.startsWith(stdResolved);
+  });
   docPathsToRemove.forEach(dp => {
     removeDocument(dp);
   });

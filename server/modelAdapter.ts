@@ -56,6 +56,49 @@ export function getLocalVector(text: string, vocab: string[]): number[] {
   return vector;
 }
 
+// Helper to perform fetch with timeout, retries on 429/500/503 and exponential backoff
+async function fetchWithRetry(url: string, options: RequestInit, timeoutMs = 10000, maxRetries = 3): Promise<Response> {
+  let attempt = 0;
+  while (attempt < maxRetries) {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeoutMs);
+    
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal
+      });
+      clearTimeout(id);
+      
+      // If we get a rate limit (429) or transient server load (502, 503, 504), wait and retry
+      if (response.status === 429 || (response.status >= 500 && response.status <= 504)) {
+        attempt++;
+        if (attempt < maxRetries) {
+          const waitTime = Math.pow(3, attempt) * 150 + Math.random() * 100;
+          console.warn(`[API Retry] HTTP status ${response.status} for ${url}. Retrying in ${Math.round(waitTime)}ms... (Attempt ${attempt}/${maxRetries})`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          continue;
+        }
+      }
+      
+      return response;
+    } catch (err: any) {
+      clearTimeout(id);
+      attempt++;
+      if (attempt < maxRetries) {
+        const isTimeout = err.name === "AbortError";
+        const waitTime = Math.pow(3, attempt) * 150 + Math.random() * 100;
+        console.warn(`[API Retry] Request failed for ${url} (${isTimeout ? "Timeout" : err.message}). Retrying in ${Math.round(waitTime)}ms... (Attempt ${attempt}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        continue;
+      }
+      throw err;
+    }
+  }
+  
+  throw new Error(`Request failed after ${maxRetries} attempts`);
+}
+
 export async function computeEmbedding(text: string, settings: Settings): Promise<number[]> {
   const mode = settings.embeddingMode;
   
@@ -89,28 +132,41 @@ export async function computeEmbedding(text: string, settings: Settings): Promis
 
   // Else, use online provider
   if (settings.provider === "gemini") {
-    const ai = new GoogleGenAI({
-      apiKey: settings.apiKey,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
+    let lastErr: any = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const ai = new GoogleGenAI({
+          apiKey: settings.apiKey,
+          httpOptions: {
+            headers: {
+              "User-Agent": "aistudio-build",
+            }
+          }
+        });
+
+        const model = settings.embeddingModelName || "gemini-embedding-2-preview";
+        const response = await ai.models.embedContent({
+          model: model,
+          contents: text
+        }) as any;
+
+        if (response?.embedding?.values) {
+          return response.embedding.values;
         }
+        if (response?.embeddings?.[0]?.values) {
+          return response.embeddings[0].values;
+        }
+        throw new Error("Unable to retrieve embeddings from Gemini API response");
+      } catch (err: any) {
+        lastErr = err;
+        console.warn(`[Gemini Embedding Attempt ${attempt + 1} Failed]: ${err.message}`);
+        const waitTime = Math.pow(3, attempt + 1) * 150 + Math.random() * 100;
+        await new Promise(resolve => setTimeout(resolve, waitTime));
       }
-    });
-
-    const model = settings.embeddingModelName || "gemini-embedding-2-preview";
-    const response = await ai.models.embedContent({
-      model: model,
-      contents: text
-    }) as any;
-
-    if (response?.embedding?.values) {
-      return response.embedding.values;
     }
-    if (response?.embeddings?.[0]?.values) {
-      return response.embeddings[0].values;
-    }
-    throw new Error("Unable to retrieve embeddings from Gemini API response");
+
+    console.warn("Retrying embedding calculation natively due to Gemini failures:", lastErr?.message);
+    return computeEmbedding(text, { ...settings, embeddingMode: "offline" });
   }
 
   // Custom endpoints (OpenAI or DeepSeek-compatible endpoints)
@@ -118,7 +174,7 @@ export async function computeEmbedding(text: string, settings: Settings): Promis
   const model = settings.embeddingModelName || "text-embedding-3-small";
 
   try {
-    const res = await fetch(`${endpoint.replace(/\/$/, "")}/embeddings`, {
+    const res = await fetchWithRetry(`${endpoint.replace(/\/$/, "")}/embeddings`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -128,7 +184,7 @@ export async function computeEmbedding(text: string, settings: Settings): Promis
         input: text,
         model: model
       })
-    });
+    }, 12000, 3); // 12 seconds timeout, 3 retries max
 
     if (!res.ok) {
       const errText = await res.text();
@@ -136,13 +192,25 @@ export async function computeEmbedding(text: string, settings: Settings): Promis
     }
 
     const json = await res.json() as any;
-    const values = json?.data?.[0]?.embedding;
+    
+    // Support multiple format outcomes for maximum resilience with third-party endpoints
+    let values = json?.data?.[0]?.embedding;
+    if (!Array.isArray(values) && Array.isArray(json?.embedding)) {
+      values = json.embedding;
+    }
+    if (!Array.isArray(values) && Array.isArray(json)) {
+      values = json;
+    }
+    if (!Array.isArray(values) && Array.isArray(json?.embeddings?.[0])) {
+      values = json.embeddings[0];
+    }
+
     if (Array.isArray(values)) {
       return values;
     }
-    throw new Error("Embedding payload format mismatch");
+    throw new Error(`Embedding payload format mismatch. Keys: ${Object.keys(json || {})}`);
   } catch (err: any) {
-    console.warn("Retrying embedding calculation natively due to external failure", err.message);
+    console.warn("Retrying embedding calculation natively due to external failure:", err.message);
     return computeEmbedding(text, { ...settings, embeddingMode: "offline" });
   }
 }
@@ -164,25 +232,32 @@ ${context}`;
   }
 
   if (settings.provider === "gemini") {
-    try {
-      const ai = new GoogleGenAI({
-        apiKey: settings.apiKey,
-        httpOptions: {
-          headers: {
-            "User-Agent": "aistudio-build",
+    let lastErr: any = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const ai = new GoogleGenAI({
+          apiKey: settings.apiKey,
+          httpOptions: {
+            headers: {
+              "User-Agent": "aistudio-build",
+            }
           }
-        }
-      });
+        });
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: defaultPrompt
-      });
+        const response = await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: defaultPrompt
+        });
 
-      return response.text || "无法生成大模型总结。";
-    } catch (err: any) {
-      return `【大语言模型总结调用发生异常】\n原因：${err.message}\n您可以到右上角设置修改API Key或网络节点。`;
+        return response.text || "无法生成大模型总结。";
+      } catch (err: any) {
+        lastErr = err;
+        console.warn(`[Gemini askAI Attempt ${attempt + 1} Failed]: ${err.message}`);
+        const waitTime = Math.pow(3, attempt + 1) * 200 + Math.random() * 100;
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
     }
+    return `【大语言模型总结调用发生异常（重试已枯竭）】\n原因：${lastErr?.message}\n您可以到右上角设置修改API Key或网络节点。`;
   }
 
   // Standard chat completions for OpenAI-Compatible providers (DeepSeek, Custom endpoints, Ollama, etc.)
@@ -190,7 +265,7 @@ ${context}`;
   const model = settings.modelName || (settings.provider === "deepseek" ? "deepseek-chat" : "gpt-4o-mini");
 
   try {
-    const res = await fetch(`${endpoint.replace(/\/$/, "")}/chat/completions`, {
+    const res = await fetchWithRetry(`${endpoint.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -204,15 +279,21 @@ ${context}`;
         ],
         temperature: 0.7
       })
-    });
+    }, 25000, 3); // 25s timeout for chat summarization, 3 retries max
 
     if (!res.ok) {
       throw new Error(`Chat completions returned status ${res.status}`);
     }
 
     const data = await res.json() as any;
-    return data?.choices?.[0]?.message?.content || "API未返回有效文本内容。";
+    
+    // Resilient completion content extraction
+    const content = data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || data?.response || data?.content;
+    if (content) {
+      return content;
+    }
+    return "API未返回任何有效文本内容或格式发生不兼容偏差。";
   } catch (err: any) {
-    return `配置的大模型厂商返回了连接错误: ${err.message}`;
+    return `配置的大模型厂商返回了连接错误（重试已均告失败）: ${err.message}`;
   }
 }
