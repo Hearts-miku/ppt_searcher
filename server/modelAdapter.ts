@@ -297,3 +297,86 @@ ${context}`;
     return `配置的大模型厂商返回了连接错误（重试已均告失败）: ${err.message}`;
   }
 }
+
+export async function testLLMConnection(settings: Settings): Promise<{ success: boolean; message: string; latencyMs: number }> {
+  const startTime = Date.now();
+  if (settings.provider === "gemini") {
+    try {
+      const ai = new GoogleGenAI({
+        apiKey: settings.apiKey,
+        httpOptions: {
+          headers: {
+            "User-Agent": "aistudio-build",
+          }
+        }
+      });
+
+      const model = settings.modelName || "gemini-3.5-flash";
+      const response = await ai.models.generateContent({
+        model: model,
+        contents: "Hello, confirm connectivity with a one word answer like 'OK' or 'Pong'."
+      });
+
+      const latencyMs = Date.now() - startTime;
+      if (response.text) {
+        return {
+          success: true,
+          message: `推理模型 [${model}] 连接成功！响应内容: "${response.text.trim()}"`,
+          latencyMs
+        };
+      }
+      throw new Error("模型未返回任何文本内容。");
+    } catch (err: any) {
+      return {
+        success: false,
+        message: `推理模型 [${settings.modelName || "gemini-3.5-flash"}] 测试连接失败: ${err.message}`,
+        latencyMs: Date.now() - startTime
+      };
+    }
+  }
+
+  // OpenAI-compatible endpoints or Ollama/DeepSeek
+  const endpoint = settings.customEndpoint || (settings.provider === "deepseek" ? "https://api.deepseek.com/v1" : "https://api.openai.com/v1");
+  const model = settings.modelName || (settings.provider === "deepseek" ? "deepseek-chat" : "gpt-4o-mini");
+
+  try {
+    const res = await fetchWithRetry(`${endpoint.replace(/\/$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${settings.apiKey}`
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: [
+          { role: "user", content: "Hello, confirm connectivity with a one word answer like 'OK'." }
+        ],
+        max_tokens: 10,
+        temperature: 0.5
+      })
+    }, 8000, 2); // 8s timeout, 2 retries
+
+    const latencyMs = Date.now() - startTime;
+    if (!res.ok) {
+      throw new Error(`HTTP 失败，状态码: ${res.status}`);
+    }
+
+    const data = await res.json() as any;
+    const content = data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || data?.response || data?.content;
+    if (content) {
+      return {
+        success: true,
+        message: `推理模型 [${model}] 连接成功！响应内容: "${content.trim()}"`,
+        latencyMs
+      };
+    }
+    throw new Error("模型未响应任何文本内容或格式发生不兼容。");
+  } catch (err: any) {
+    return {
+      success: false,
+      message: `推理模型 [${model}] 无法连通: ${err.message}`,
+      latencyMs: Date.now() - startTime
+    };
+  }
+}
+

@@ -12,7 +12,42 @@ import {
   startupAutoLoad,
   getIndexingStatus
 } from "./server/scanner";
-import { computeEmbedding, askAI } from "./server/modelAdapter";
+import { computeEmbedding, askAI, testLLMConnection } from "./server/modelAdapter";
+import { exec } from "child_process";
+
+// Local OS automation helper functions
+function runLocalCommand(cmd: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    exec(cmd, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(stderr || error.message));
+      } else {
+        resolve(stdout);
+      }
+    });
+  });
+}
+
+function runPowerShellScript(scriptContent: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const tempFile = path.join(process.cwd(), `tmp_${Date.now()}.ps1`);
+    fs.writeFile(tempFile, scriptContent, "utf8", (err) => {
+      if (err) {
+        return reject(err);
+      }
+      const cmd = `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${tempFile}"`;
+      exec(cmd, (error, stdout, stderr) => {
+        // Clean up temp file safely
+        fs.unlink(tempFile, () => {});
+        if (error) {
+          reject(new Error(stderr || error.message));
+        } else {
+          resolve(stdout);
+        }
+      });
+    });
+  });
+}
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
@@ -70,43 +105,58 @@ app.post("/api/settings/test", async (req, res) => {
   const provider = settings.provider;
   const apiKey = settings.apiKey;
 
-  if (!apiKey && settings.embeddingMode === "online") {
-    return res.status(400).json({ success: false, message: "请输入 API Key 秘钥后再执行测试" });
-  }
+  const results: string[] = [];
+  let isAllSuccess = true;
 
-  try {
-    if (settings.embeddingMode === "offline") {
-      return res.json({ success: true, message: "本地Wasm离线向量可用, 响应时间 < 2ms (100% 隐私安全)" });
-    }
-
-    const startTime = Date.now();
-    // Try doing a simple text prompt to prove it works
-    const testSettings = {
-      provider,
-      apiKey,
-      customEndpoint: settings.customEndpoint,
-      modelName: settings.modelName,
-      embeddingMode: "online" as const
-    };
-
-    if (provider === "gemini") {
-      const response = await computeEmbedding("Hello structural test ping", testSettings);
-      const duration = Date.now() - startTime;
-      if (Array.isArray(response) && response.length > 0) {
-        return res.json({ success: true, message: `成功连通 Google GenAI (维度: ${response.length}, 响应: ${duration}ms)` });
-      }
+  // 1. Check embedding engine
+  if (settings.embeddingMode === "offline") {
+    results.push("✅ 【词向量模型】: 本地Wasm离线分词余弦检索就绪 (100% 隐私安全)");
+  } else {
+    // Online embedding test
+    if (!apiKey) {
+      results.push("❌ 【词向量模型】: 未配置 API Key，无法进行云端向量运算。");
+      isAllSuccess = false;
     } else {
-      // Direct post to test endpoints
-      const response = await computeEmbedding("Hello structural test ping", testSettings);
-      const duration = Date.now() - startTime;
-      if (Array.isArray(response) && response.length > 0) {
-        return res.json({ success: true, message: `成功连通 API (维度: ${response.length}, 响应: ${duration}ms)` });
+      try {
+        const startTime = Date.now();
+        const response = await computeEmbedding("Hello structural test ping", settings);
+        const duration = Date.now() - startTime;
+        if (Array.isArray(response) && response.length > 0) {
+          results.push(`✅ 【词向量模型】: 云端 [${settings.embeddingModelName || "默认选项"}] 连通成功！(维度: ${response.length}, 耗时: ${duration}ms)`);
+        } else {
+          throw new Error("未返回有效的矢量维度载荷。");
+        }
+      } catch (err: any) {
+        results.push(`❌ 【词向量模型】: 云端 [${settings.embeddingModelName || "默认选项"}] 无法连通 - 原因: ${err.message}`);
+        isAllSuccess = false;
       }
     }
-    throw new Error("API未返回有效的向量维度载荷");
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: `测试连通失败: ${err.message}` });
   }
+
+  // 2. Check Reasoning LLM connectivity
+  if (!apiKey) {
+    results.push(`⚠️ 【推理大模型】: [${settings.modelName || "未指定"}] 未配置 API Key，交互提问时将回退至本地启发式检索排版。`);
+  } else {
+    try {
+      const llmResult = await testLLMConnection(settings);
+      if (llmResult.success) {
+        results.push(`✅ 【推理大模型】: [${settings.modelName || "未指定"}] 连通成功！(耗时: ${llmResult.latencyMs}ms, 响应示例: ${JSON.stringify(llmResult.message.includes('响应内容: "') ? llmResult.message.split('响应内容: "')[1].slice(0, -1) : llmResult.message)})`);
+      } else {
+        results.push(`❌ 【推理大模型】: [${settings.modelName || "未指定"}] 无法连通 - 原因: ${llmResult.message}`);
+        isAllSuccess = false;
+      }
+    } catch (err: any) {
+      results.push(`❌ 【推理大模型】: [${settings.modelName || "未指定"}] 连接时遇到未知异常 - ${err.message}`);
+      isAllSuccess = false;
+    }
+  }
+
+  const finalMessage = results.join("\n");
+
+  res.json({
+    success: isAllSuccess,
+    message: finalMessage
+  });
 });
 
 // 5. Monitored folders information
@@ -298,9 +348,29 @@ function cosineSimilarity(v1: number[], v2: number[]): number {
   return dot / (Math.sqrt(norm1) * Math.sqrt(norm2));
 }
 
-// 10. AI Semantic vector search engine
+// Tokenize utility for hybrid search processing
+function tokenizeText(text: string): string[] {
+  if (!text) return [];
+  const lower = text.toLowerCase();
+  
+  // Extract English/alphanumeric terms
+  const engTerms = lower.match(/[a-zA-Z0-9]+/g) || [];
+  
+  // Extract Chinese/CJK characters to support precise unigram/bigram match
+  const cjkTerms: string[] = [];
+  const cjkMatches = lower.match(/[\u4e00-\u9fa5]/g) || [];
+  cjkTerms.push(...cjkMatches);
+
+  for (let i = 0; i < cjkMatches.length - 1; i++) {
+    cjkTerms.push(cjkMatches[i] + cjkMatches[i + 1]);
+  }
+
+  return [...engTerms, ...cjkTerms].filter(t => t.length > 0);
+}
+
+// 10. AI Semantic vector & Keyword Hybrid search engine
 app.post("/api/search", async (req, res) => {
-  const { query, keywordWeight = 0.3 } = req.body;
+  const { query, vectorWeight = 0.5, fusionMethod = "linear" } = req.body;
   if (!query) {
     return res.status(400).json({ error: "提问文本 query 不能为空" });
   }
@@ -309,37 +379,123 @@ app.post("/api/search", async (req, res) => {
   const db = getDatabase();
 
   try {
-    // Generate embedding for current query text
-    const queryVector = await computeEmbedding(query, config.settings);
-    const queryTokens = query.toLowerCase().split(/\s+/).filter((t: string) => t.length > 0);
+    // Generate embedding for current query text if we're not exclusively using keyword search
+    let queryVector: number[] | null = null;
+    if (vectorWeight > 0) {
+      try {
+        queryVector = await computeEmbedding(query, config.settings);
+      } catch (err: any) {
+        console.warn("[Hybrid Search] Failed to compute query embedding, fallback to safe term vector", err.message);
+      }
+    }
+
+    const queryTokens = tokenizeText(query);
+    const allSlides: any[] = [];
+    Object.values(db.documents).forEach(doc => {
+      doc.slides.forEach(slide => {
+        allSlides.push(slide);
+      });
+    });
+
+    const totalDocs = allSlides.length;
+
+    // --- 1. Compute BM25 Scores ---
+    const docTokensList = allSlides.map(slide => {
+      const content = `${slide.title} ${slide.text} ${slide.note}`;
+      const tokens = tokenizeText(content);
+      const tfMap = new Map<string, number>();
+      tokens.forEach(tok => {
+        tfMap.set(tok, (tfMap.get(tok) || 0) + 1);
+      });
+      return {
+        id: slide.id,
+        tokensCount: tokens.length,
+        tfMap
+      };
+    });
+
+    const totalLength = docTokensList.reduce((acc, doc) => acc + doc.tokensCount, 0);
+    const avgdl = totalDocs > 0 ? totalLength / totalDocs : 1;
+
+    // Inverse Document Frequency map
+    const idfMap = new Map<string, number>();
+    queryTokens.forEach(token => {
+      const df = docTokensList.filter(doc => doc.tfMap.has(token)).length;
+      const idf = Math.log((totalDocs - df + 0.5) / (df + 0.5) + 1);
+      idfMap.set(token, idf > 0 ? idf : 0.01);
+    });
+
+    const k1 = 1.2;
+    const b = 0.75;
+    const bm25Map = new Map<string, number>();
+    let maxBm25Score = 0.001;
+
+    docTokensList.forEach(doc => {
+      let score = 0;
+      queryTokens.forEach(token => {
+        const tf = doc.tfMap.get(token) || 0;
+        if (tf > 0) {
+          const idf = idfMap.get(token) || 0;
+          const numerator = tf * (k1 + 1);
+          const denominator = tf + k1 * (1 - b + b * (doc.tokensCount / avgdl));
+          score += idf * (numerator / denominator);
+        }
+      });
+      bm25Map.set(doc.id, score);
+      if (score > maxBm25Score) {
+        maxBm25Score = score;
+      }
+    });
 
     const matchCandidates: any[] = [];
 
-    // Score all slides from the DB
-    Object.values(db.documents).forEach(doc => {
-      doc.slides.forEach(slide => {
-        // 1. Vector similarity
+    // --- 2. Rank Fusion and Combined Scoring ---
+    if (fusionMethod === "rrf") {
+      // Reciprocal Rank Fusion (RRF)
+      // First, get Dense scores ranks
+      const denseScored = allSlides.map(slide => {
         const slideVector = db.vectors[slide.id];
         let vectorScore = 0;
         if (slideVector && queryVector) {
           vectorScore = cosineSimilarity(queryVector, slideVector);
         }
+        return { id: slide.id, slide, vectorScore };
+      }).sort((a, b) => b.vectorScore - a.vectorScore);
 
-        // 2. Keyword exact match frequency boost
-        let keywordScore = 0;
-        const combText = `${slide.title} ${slide.text} ${slide.note}`.toLowerCase();
-        queryTokens.forEach((tok: string) => {
-          if (combText.includes(tok)) {
-            keywordScore += 0.2; // bonus booster
-          }
-        });
+      // Second, get Sparse (BM25) scores ranks
+      const sparseScored = allSlides.map(slide => {
+        const bm25Score = bm25Map.get(slide.id) || 0;
+        return { id: slide.id, bm25Score };
+      }).sort((a, b) => b.bm25Score - a.bm25Score);
 
-        // Combined final score
-        const finalScore = vectorScore * (1 - keywordWeight) + keywordScore * keywordWeight;
+      const denseRankMap = new Map<string, number>();
+      denseScored.forEach((item, index) => {
+        // If the vector similarity indicates absolute zero or negative correlation, rank is poor
+        denseRankMap.set(item.id, item.vectorScore > 0 ? index + 1 : totalDocs + 1);
+      });
 
-        // Skip absolute zero matches
-        if (finalScore > 0.05) {
-          // Generate simple highlighting snippets
+      const sparseRankMap = new Map<string, number>();
+      sparseScored.forEach((item, index) => {
+        sparseRankMap.set(item.id, item.bm25Score > 0 ? index + 1 : totalDocs + 1);
+      });
+
+      const k_rrf = 60; // constant
+
+      allSlides.forEach(slide => {
+        const denseRank = denseRankMap.get(slide.id) || (totalDocs + 1);
+        const sparseRank = sparseRankMap.get(slide.id) || (totalDocs + 1);
+
+        const rrfVectorPart = denseRank <= totalDocs ? (1 / (k_rrf + denseRank)) : 0;
+        const rrfSparsePart = sparseRank <= totalDocs ? (1 / (k_rrf + sparseRank)) : 0;
+
+        // Final score combines rank inverse weights
+        const finalRrfScore = (rrfVectorPart * vectorWeight) + (rrfSparsePart * (1 - vectorWeight));
+
+        const originalVectorScore = denseScored.find(it => it.id === slide.id)?.vectorScore || 0;
+        const originalBm25Score = bm25Map.get(slide.id) || 0;
+
+        // Keep candidates containing some minimal correlation
+        if (finalRrfScore > 0) {
           const highlights: string[] = [];
           const fragments = [slide.title, ...slide.text.split("\n"), slide.note];
           fragments.forEach(frag => {
@@ -350,14 +506,50 @@ app.post("/api/search", async (req, res) => {
 
           matchCandidates.push({
             ...slide,
-            score: parseFloat(finalScore.toFixed(4)),
+            score: parseFloat((finalRrfScore * 100).toFixed(4)), // Magnified scale for UX parsing
+            vectorSimilarity: parseFloat((originalVectorScore * 100).toFixed(2)),
+            textRelevanceBM25: parseFloat(originalBm25Score.toFixed(3)),
             highlights: highlights.slice(0, 3)
           });
         }
       });
-    });
+    } else {
+      // Linear Score Combination
+      allSlides.forEach(slide => {
+        const slideVector = db.vectors[slide.id];
+        let vectorScore = 0;
+        if (slideVector && queryVector) {
+          vectorScore = cosineSimilarity(queryVector, slideVector);
+          // Bound negative cosine values
+          if (vectorScore < 0) vectorScore = 0;
+        }
 
-    // Sort matching results
+        const rawBm25 = bm25Map.get(slide.id) || 0;
+        const normBm25 = maxBm25Score > 0 ? rawBm25 / maxBm25Score : 0;
+
+        const finalScore = (vectorScore * vectorWeight) + (normBm25 * (1 - vectorWeight));
+
+        if (finalScore > 0.02) {
+          const highlights: string[] = [];
+          const fragments = [slide.title, ...slide.text.split("\n"), slide.note];
+          fragments.forEach(frag => {
+            if (queryTokens.some((tok: string) => frag.toLowerCase().includes(tok))) {
+              highlights.push(frag);
+            }
+          });
+
+          matchCandidates.push({
+            ...slide,
+            score: parseFloat((finalScore * 100).toFixed(2)), // percentage display friendliness
+            vectorSimilarity: parseFloat((vectorScore * 100).toFixed(2)),
+            textRelevanceBM25: parseFloat(rawBm25.toFixed(3)),
+            highlights: highlights.slice(0, 3)
+          });
+        }
+      });
+    }
+
+    // Sort matching results descending
     matchCandidates.sort((a, b) => b.score - a.score);
     const topSlides = matchCandidates.slice(0, 8);
 
@@ -370,12 +562,14 @@ app.post("/api/search", async (req, res) => {
       
       aiSummary = await askAI(query, contextBlocks, config.settings);
     } else {
-      aiSummary = "未在本地索引存储的幻灯片中发现与该提问内容具有强语义契合的文本片段。您可以尝试增加监控文件夹，或降低检索阈值重新搜索。";
+      aiSummary = "未在本地索引存储的幻灯片中发现与该提问内容具有强契合度的文本片段。您可以尝试配置混合检索滑块，提升关键词检索比重，或重新调整监控目录。";
     }
 
     res.json({
       done: true,
       query,
+      vectorWeight,
+      fusionMethod,
       aiSummary,
       slides: topSlides
     });
@@ -385,7 +579,7 @@ app.post("/api/search", async (req, res) => {
 });
 
 // 11. Reveal in File Explorer Deep linking
-app.post("/api/local/reveal", (req, res) => {
+app.post("/api/local/reveal", async (req, res) => {
   const filePath = req.body.filePath;
   if (!filePath) {
     return res.status(400).json({ error: "文件绝对路径参数 filePath 不能为空" });
@@ -396,16 +590,25 @@ app.post("/api/local/reveal", (req, res) => {
     ? `explorer.exe /select,"${filePath}"` 
     : `open -R "${filePath}"`;
 
-  // Return the script generated so user sees how OS integrates, alongside mock response in backend sandbox
-  res.json({
-    success: true,
-    scriptGenerated: cmd,
-    message: `本地操作系统定位指令已成功构建。执行命令：[${cmd}]，瞬间唤醒桌面的文件系统，高亮划定文稿所在路径。`
-  });
+  try {
+    await runLocalCommand(cmd);
+    res.json({
+      success: true,
+      scriptGenerated: cmd,
+      message: `本地操作系统定位指令已成功执行，已帮您在资源管理器/访达中高亮显示对应文件。`
+    });
+  } catch (err: any) {
+    console.warn(`[Local Reveal Warning]: Failed to reveal path on this environment. Details: ${err.message}`);
+    res.json({
+      success: false,
+      scriptGenerated: cmd,
+      message: `无法在本地服务器运行定位，可能原因为当前处于云端沙箱或操作系统执行受限。提示：${err.message}`
+    });
+  }
 });
 
 // 12. Open Excel or PowerPoint slide at exact index (OS script auto dispatching)
-app.post("/api/local/open-slide", (req, res) => {
+app.post("/api/local/open-slide", async (req, res) => {
   const { filePath, slideIndex } = req.body;
   if (!filePath || !slideIndex) {
     return res.status(400).json({ error: "filePath 与 slideIndex 参数均不能为空" });
@@ -434,11 +637,25 @@ end tell'
     `.trim();
   }
 
-  res.json({
-    success: true,
-    scriptGenerated: script,
-    message: `幻灯片精准飞梭触发器成功响应！已在后台独占锁中排入 OS 自动化定位进程。直达第 ${slideIndex} 页。`
-  });
+  try {
+    if (isWindows) {
+      await runPowerShellScript(script);
+    } else {
+      await runLocalCommand(script);
+    }
+    res.json({
+      success: true,
+      scriptGenerated: script,
+      message: `已成功在本地拉起 PowerPoint 并精确定位至第 ${slideIndex} 页。`
+    });
+  } catch (err: any) {
+    console.warn(`[Local Open-Slide Warning]: Failed to run slide automation. Details: ${err.message}`);
+    res.json({
+      success: false,
+      scriptGenerated: script,
+      message: `由于沙箱容器限制或本地未安装 Microsoft PowerPoint，无法直接拉起：${err.message}`
+    });
+  }
 });
 
 // Serve frontend based on mode

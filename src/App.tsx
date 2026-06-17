@@ -37,6 +37,8 @@ export default function App() {
   });
 
   const [pingOnline, setPingOnline] = useState(true);
+  const [vectorWeight, setVectorWeight] = useState(0.5);
+  const [fusionMethod, setFusionMethod] = useState<"linear" | "rrf">("linear");
 
   // Load monitored lists and settings status
   const loadMonitoredFolders = () => {
@@ -95,7 +97,11 @@ export default function App() {
       const res = await fetch("/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: activeQuery })
+        body: JSON.stringify({ 
+          query: activeQuery,
+          vectorWeight,
+          fusionMethod
+        })
       });
       if (res.ok) {
         const data = await res.json();
@@ -199,10 +205,74 @@ export default function App() {
                   disabled={searching || !query.trim()}
                   className="absolute right-2 px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-semibold text-xs hover:bg-cyan-400 transition disabled:opacity-50"
                 >
-                  {searching ? "检索中..." : "语义探针"}
+                  {searching ? "检索中..." : "混合检索"}
                 </button>
               </div>
             </form>
+
+            {/* Hybrid Search parameters Config Panel */}
+            <div className="mt-3 rounded-xl border border-white/5 bg-slate-900/60 p-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                {/* Fusion selector */}
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-slate-400 font-mono">融合算子:</span>
+                  <div className="flex rounded-lg bg-slate-950 p-0.5 border border-white/5">
+                    <button
+                      type="button"
+                      onClick={() => setFusionMethod("linear")}
+                      className={`px-3 py-1 text-[11px] rounded-md font-medium transition ${
+                        fusionMethod === "linear"
+                          ? "bg-cyan-500 text-slate-950 font-bold"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      加权线性融合 (Linear)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFusionMethod("rrf")}
+                      className={`px-3 py-1 text-[11px] rounded-md font-medium transition ${
+                        fusionMethod === "rrf"
+                          ? "bg-cyan-500 text-slate-950 font-bold"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                      title="倒数排名融合：依据 dense/sparse 双路分词排序加权"
+                    >
+                      倒数排名融合 (RRF)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Slider bar for Hybrid Balance */}
+                <div className="flex-1 flex items-center justify-end gap-3.5">
+                  <div className="flex flex-col items-end">
+                    <span className="text-[11px] text-slate-400 font-mono">
+                      语义权重 (Vector): <span className="text-cyan-400 font-bold">{(vectorWeight * 100).toFixed(0)}%</span>
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={vectorWeight}
+                    onChange={(e) => setVectorWeight(parseFloat(e.target.value))}
+                    className="w-28 md:w-36 h-1 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-cyan-400 border border-white/5"
+                  />
+                  <div className="flex flex-col items-start">
+                    <span className="text-[11px] text-slate-400 font-mono">
+                      文本权重 (BM25): <span className="text-amber-400 font-bold">{((1 - vectorWeight) * 100).toFixed(0)}%</span>
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Explaining caption */}
+              <div className="mt-2.5 pt-2 border-t border-white/5 flex items-center justify-between text-[10px] text-slate-500 font-mono">
+                <span>{fusionMethod === "linear" ? "💡 混合线性评分：对多路相关度进行正态映射累加，兼顾模糊语义与精确汉字匹配。" : "💡 RRF 交叉：基于经典多路搜索排名融合，可直接在未在线预热的文档中过滤极佳的精确文摘。"}</span>
+                <span className="text-slate-400">双轮混合检索引擎 (Dense+Sparse Search Engine)</span>
+              </div>
+            </div>
           </div>
 
           {/* 2. Starting dashboard or Search results layout */}

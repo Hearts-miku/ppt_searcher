@@ -24,13 +24,17 @@ export interface SlideItem {
   title: string;
   text: string;
   note: string;
-  score?: number; // Optional similarity index
+  score?: number; // Optional similarity index OR fused score
+  vectorSimilarity?: number; // Dense cosine similarity percentage
+  textRelevanceBM25?: number; // Sparse BM25 keyword score
   highlights?: string[]; // Query matching snippets
 }
 
 export interface SearchResult {
   done: boolean;
   query: string;
+  vectorWeight?: number;
+  fusionMethod?: string;
   aiSummary: string;
   slides: SlideItem[];
 }

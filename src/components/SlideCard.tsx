@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { motion } from "motion/react";
 import { SlideItem } from "../types";
 import { Copy, Clipboard, Play, BookOpen, ExternalLink, Calendar, Check } from "lucide-react";
+import { copyToClipboard } from "../utils";
 
 interface SlideCardProps {
   key?: any;
@@ -13,10 +14,10 @@ export default function SlideCard({ slide, onSelect }: SlideCardProps) {
   const [copied, setCopied] = useState(false);
   const [runningScript, setRunningScript] = useState<string | null>(null);
 
-  const handleCopy = (e: React.MouseEvent) => {
+  const handleCopy = async (e: React.MouseEvent) => {
     e.stopPropagation();
     const clipText = `【${slide.documentName} - 第 ${slide.slideIndex} 页】\n标题: ${slide.title}\n正文内容:\n${slide.text}\n备注注释:\n${slide.note}`;
-    navigator.clipboard.writeText(clipText);
+    await copyToClipboard(clipText);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -34,10 +35,16 @@ export default function SlideCard({ slide, onSelect }: SlideCardProps) {
         })
       });
       const data = await res.json();
-      setRunningScript(`精准飞梭页码成功！`);
+      if (data.success) {
+        setRunningScript(`精准飞梭页码成功！`);
+      } else {
+        setRunningScript("唤端失败");
+        alert(`【本地唤端失败】\n\n${data.message}`);
+      }
       setTimeout(() => setRunningScript(null), 3500);
     } catch (err: any) {
       setRunningScript("唤端失败");
+      alert(`【唤端出错】无法连接到本地服务，请检查本地服务器是否处于启动状态：${err.message}`);
       setTimeout(() => setRunningScript(null), 3000);
     }
   };
@@ -51,9 +58,13 @@ export default function SlideCard({ slide, onSelect }: SlideCardProps) {
         body: JSON.stringify({ filePath: slide.filePath })
       });
       const data = await res.json();
-      alert(data.message);
-    } catch (err) {
-      alert("无法揭示本地文件夹");
+      if (data.success) {
+        // success feedback
+      } else {
+        alert(`【定位失败】\n\n${data.message}`);
+      }
+    } catch (err: any) {
+      alert(`【定位出错】无法连接到本地服务：${err.message}`);
     }
   };
 
@@ -149,14 +160,35 @@ export default function SlideCard({ slide, onSelect }: SlideCardProps) {
 
       {/* 3. External details, score, and match highlighting snippets */}
       <div className="flex flex-1 flex-col justify-between p-3.5 bg-slate-900 border-t border-white/5 text-xs text-slate-400 font-sans">
-        <div className="mb-2 flex items-center justify-between">
-          <span className="truncate max-w-[150px] rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
-            {slide.documentName}
-          </span>
-          {slide.score && (
-            <span className="rounded bg-cyan-400/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-cyan-400">
-              分值: {slide.score}
+        <div className="mb-2 flex flex-col gap-1.5 border-b border-white/5 pb-2">
+          <div className="flex items-center justify-between">
+            <span className="truncate max-w-[150px] rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
+              {slide.documentName}
             </span>
+            {slide.score !== undefined && (
+              <span className="rounded bg-cyan-400/20 px-2 py-0.5 font-mono text-[10px] font-extrabold text-cyan-300 border border-cyan-400/30">
+                混合得分: {slide.score}
+              </span>
+            )}
+          </div>
+
+          {/* Show hybrid metrics details */}
+          {slide.score !== undefined && (slide.vectorSimilarity !== undefined || slide.textRelevanceBM25 !== undefined) && (
+            <div className="flex items-center gap-2 text-[9px] text-slate-500 font-mono">
+              {slide.vectorSimilarity !== undefined && (
+                <span className="flex items-center gap-0.5" title="Dense Cosine Similarity">
+                  📡 Vector: <span className="text-cyan-400/90">{slide.vectorSimilarity}%</span>
+                </span>
+              )}
+              {slide.vectorSimilarity !== undefined && slide.textRelevanceBM25 !== undefined && (
+                <span className="text-white/10">|</span>
+              )}
+              {slide.textRelevanceBM25 !== undefined && (
+                <span className="flex items-center gap-0.5" title="Sparse Okapi BM25 Score">
+                  🔍 BM25: <span className="text-amber-400/90">{slide.textRelevanceBM25}</span>
+                </span>
+              )}
+            </div>
           )}
         </div>
 

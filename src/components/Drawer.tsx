@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { SlideItem } from "../types";
 import { X, Clipboard, Play, ExternalLink, Cpu, Sparkles, Check, RefreshCw } from "lucide-react";
+import { copyToClipboard } from "../utils";
 
 interface DrawerProps {
   isOpen: boolean;
@@ -15,17 +16,18 @@ export default function Drawer({ isOpen, slide, onClose, settings }: DrawerProps
   const [copiedText, setCopiedText] = useState(false);
   const [aiRefining, setAiRefining] = useState(false);
   const [aiPoints, setAiPoints] = useState<string | null>(null);
+  const [launchStatus, setLaunchStatus] = useState<string | null>(null);
 
   if (!slide) return null;
 
-  const handleCopyNote = () => {
-    navigator.clipboard.writeText(slide.note || "（此幻灯片暂无备注）");
+  const handleCopyNote = async () => {
+    await copyToClipboard(slide.note || "（此幻灯片暂无备注）");
     setCopiedNote(true);
     setTimeout(() => setCopiedNote(false), 2000);
   };
 
-  const handleCopyText = () => {
-    navigator.clipboard.writeText(slide.text || "（此幻灯片暂无文字）");
+  const handleCopyText = async () => {
+    await copyToClipboard(slide.text || "（此幻灯片暂无文字）");
     setCopiedText(true);
     setTimeout(() => setCopiedText(false), 2000);
   };
@@ -53,7 +55,8 @@ export default function Drawer({ isOpen, slide, onClose, settings }: DrawerProps
 
   const handleLaunchLocal = async () => {
     try {
-      await fetch("/api/local/open-slide", {
+      setLaunchStatus("唤起定位中...");
+      const res = await fetch("/api/local/open-slide", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -61,7 +64,19 @@ export default function Drawer({ isOpen, slide, onClose, settings }: DrawerProps
           slideIndex: slide.slideIndex
         })
       });
-    } catch {}
+      const data = await res.json();
+      if (data.success) {
+        setLaunchStatus("精准定位成功！");
+      } else {
+        setLaunchStatus("定位失败");
+        alert(`【本地唤起失败】\n\n${data.message}`);
+      }
+    } catch (err: any) {
+      setLaunchStatus("链接出错");
+      alert(`【无法连接】未能在本地拉起定位。如果您是在本地计算机运行，请确保本地服务器启动后可被成功通信：${err.message}`);
+    } finally {
+      setTimeout(() => setLaunchStatus(null), 3500);
+    }
   };
 
   return (
@@ -104,11 +119,12 @@ export default function Drawer({ isOpen, slide, onClose, settings }: DrawerProps
             {/* Quick Actions Panel */}
             <div className="flex gap-2">
               <button
+                disabled={!!launchStatus}
                 onClick={handleLaunchLocal}
-                className="flex-1 rounded-lg bg-cyan-500 py-1.5 px-3 text-xs font-semibold text-slate-950 hover:bg-cyan-400 transition flex items-center justify-center gap-1.5"
+                className="flex-1 rounded-lg bg-cyan-500 py-1.5 px-3 text-xs font-semibold text-slate-950 hover:bg-cyan-400 transition flex items-center justify-center gap-1.5 disabled:opacity-55"
               >
                 <Play className="h-3.5 w-3.5 fill-current" />
-                本地拉起定位
+                {launchStatus || "本地拉起定位"}
               </button>
             </div>
 

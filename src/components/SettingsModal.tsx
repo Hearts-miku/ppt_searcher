@@ -295,7 +295,7 @@ export default function SettingsModal({ isOpen, onClose, onSave }: SettingsModal
                     ) : (
                       <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
                     )}
-                    <span>{testResult.message}</span>
+                    <span className="whitespace-pre-wrap leading-relaxed text-left flex-1">{testResult.message}</span>
                   </motion.div>
                 )}
               </div>
