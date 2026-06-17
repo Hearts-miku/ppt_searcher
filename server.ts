@@ -3,7 +3,6 @@ import path from "path";
 import fs from "fs";
 import { loadConfig, saveConfig } from "./server/configStore";
 import { loadDatabase, getDatabase, removeDocument } from "./server/db";
-import { prepopulateSampleFolder } from "./server/parser";
 import {
   scanFolderRecursive,
   indexSingleFile,
@@ -57,19 +56,27 @@ app.use(express.json());
 
 // Bootstrapping: load database and auto-load monitored directories
 loadDatabase();
-const sampleFolder = prepopulateSampleFolder();
 
 // Setup startup scan and watchers inside config
 async function bootstrap() {
-  console.log("[INITIALIZATION] Prepopulated sample files at:", sampleFolder);
-  
-  // Auto-monitored default: if there is no monitored folder at all, register "/sample_ppts" so the user instantly sees content!
   const config = loadConfig();
-  if (config.monitoredFolders.length === 0) {
-    const absoluteSample = path.resolve(sampleFolder);
-    config.monitoredFolders.push(absoluteSample);
+  
+  // Explicitly remove legacy sample_ppts path from monitored folders to prevent monitoring it.
+  const originalLength = config.monitoredFolders.length;
+  config.monitoredFolders = config.monitoredFolders.filter(
+    (folder) => !folder.includes("sample_ppts")
+  );
+  if (config.monitoredFolders.length !== originalLength) {
     saveConfig(config);
-    console.log(`[BOOTSTRAP] Automatically registered default sample folders to monitored paths: ${absoluteSample}`);
+    console.log("[BOOTSTRAP] Cleaned up legacy sample folders from monitored paths.");
+  }
+
+  // Clean up any indexed sample documents from Database
+  const db = getDatabase();
+  for (const filePath of Object.keys(db.documents)) {
+    if (filePath.includes("sample_ppts")) {
+      removeDocument(filePath);
+    }
   }
 
   // Initialize startup alignments & watchers

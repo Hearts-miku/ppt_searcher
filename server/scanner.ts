@@ -210,18 +210,26 @@ export async function reconcileMonitoredFolders(): Promise<void> {
 // Background periodic sync timer
 let syncInterval: NodeJS.Timeout | null = null;
 
-export function startPeriodicSync(intervalMs = 8000) {
+export function startPeriodicSync(intervalMs = 180000) {
   if (syncInterval) {
     clearInterval(syncInterval);
   }
+
+  // Run immediately on startup / service activation
+  console.log(`[Auto-Sync] Executing immediate startup synchronization scan...`);
+  reconcileMonitoredFolders().catch(err => {
+    console.error("[Startup Auto-Sync Sync Error]", err);
+  });
+
   syncInterval = setInterval(async () => {
     try {
+      console.log(`[Auto-Sync] Running periodic background folder reconciliation...`);
       await reconcileMonitoredFolders();
     } catch (err) {
       console.error("[Periodic Auto-Sync Error]", err);
     }
   }, intervalMs);
-  console.log(`[Auto-Sync] Background reconciliation service started (interval: ${intervalMs}ms)`);
+  console.log(`[Auto-Sync] Background reconciliation service started (interval: ${intervalMs}ms / ${(intervalMs / 60000).toFixed(1)} minutes)`);
 }
 
 // Debounced file indexes to avoid multi-write event lockouts
