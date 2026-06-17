@@ -27,6 +27,9 @@ export default function App() {
   const [selectedSlide, setSelectedSlide] = useState<SlideItem | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   
+  const [previewTheme, setPreviewTheme] = useState<string>("random");
+  const [gridCols, setGridCols] = useState<number>(2);
+  
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<Settings>({
     provider: "gemini",
@@ -376,13 +379,92 @@ export default function App() {
                 )}
 
                 {/* 2.2 Grid Slide Results */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
+                <div className="space-y-4">
+                  
+                  {/* PPT Sizing and Template Theme Preset Controls */}
+                  <div className="rounded-xl border border-white/5 bg-slate-900/60 p-4 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="inline-block w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                          幻灯片缩略图排版定制 (Dynamic PPT Previews)
+                        </h4>
+                      </div>
+                      <p className="text-[11px] text-slate-500 font-sans leading-relaxed">
+                        支持任意格式PPT页面流式预览，可随意更替展示版式、对齐二段搜索关联词
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3">
+                      {/* Theme Presets */}
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] text-slate-400 font-mono">模版主题:</span>
+                        <select
+                          value={previewTheme}
+                          onChange={(e) => setPreviewTheme(e.target.value)}
+                          className="rounded-lg border border-white/10 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-cyan-500"
+                        >
+                          <option value="random">📑 随机绚丽多款 (Collage)</option>
+                          <option value="business">🏢 卓越商务蓝 (Navy)</option>
+                          <option value="cyber">🌌 数字科技玄 (Cyber)</option>
+                          <option value="editorial">📜 文雅黑金 (Warm Serif)</option>
+                          <option value="emerald">🌿 轻氧原木绿 (Sage)</option>
+                          <option value="luxury">👑 尊享皇家金 (Gold)</option>
+                          <option value="coral">🌸 浪漫珊瑚橘 (Coral)</option>
+                        </select>
+                      </div>
+
+                      {/* Display Column size */}
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] text-slate-400 font-mono">分辨率:</span>
+                        <div className="inline-flex rounded-lg border border-white/10 bg-slate-950 p-0.5">
+                          <button
+                            type="button"
+                            onClick={() => setGridCols(1)}
+                            className={`rounded-md px-2.5 py-1 text-xs font-semibold transition ${
+                              gridCols === 1
+                                ? "bg-cyan-500/10 text-cyan-400 font-bold"
+                                : "text-slate-400 hover:text-white"
+                            }`}
+                            title="单列大卡片 (适合精细阅读)"
+                          >
+                            大 (1列)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setGridCols(2)}
+                            className={`rounded-md px-2.5 py-1 text-xs font-semibold transition ${
+                              gridCols === 2
+                                ? "bg-cyan-500/10 text-cyan-400 font-bold"
+                                : "text-slate-400 hover:text-white"
+                            }`}
+                            title="双列中卡片 (推荐舒适)"
+                          >
+                            中 (2列)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setGridCols(3)}
+                            className={`rounded-md px-2.5 py-1 text-xs font-semibold transition ${
+                              gridCols === 3
+                                ? "bg-cyan-500/10 text-cyan-400 font-bold"
+                                : "text-slate-400 hover:text-white"
+                            }`}
+                            title="三列微型卡片 (适合快速浏览)"
+                          >
+                            小 (3列)
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between px-1">
                     <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                      检索关联到的幻灯片卡片 (共 {searchResult.slides.length} 页)：
+                      检索关联到的微缩幻灯片 (显示共 {searchResult.slides.length} 页)：
                     </span>
                     <span className="text-[10px] text-slate-500 font-mono">
-                      双击卡片或点击卡片浮层中“打开此页”可立刻唤醒本地演示文稿定位
+                      提示：双击卡片或点击“打开此页”可直接在本地 Office 中拉起并飞梭定位
                     </span>
                   </div>
 
@@ -391,11 +473,22 @@ export default function App() {
                       未在当前监控树中搜寻出语义强相关的幻灯片内容，建议更换提问大纲。
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-5" id="slide_grid">
+                    <div 
+                      className={`grid gap-5 ${
+                        gridCols === 1 
+                          ? "grid-cols-1 max-w-3xl mx-auto" 
+                          : gridCols === 3 
+                          ? "grid-cols-1 md:grid-cols-2 lg:grid-cols-3" 
+                          : "grid-cols-1 lg:grid-cols-2"
+                      }`} 
+                      id="slide_grid"
+                    >
                       {searchResult.slides.map((slide, i) => (
                         <SlideCard 
                           key={slide.id || i} 
                           slide={slide} 
+                          customThemeId={previewTheme}
+                          searchQuery={query}
                           onSelect={(s) => {
                             setSelectedSlide(s);
                             setIsDrawerOpen(true);

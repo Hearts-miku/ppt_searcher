@@ -4,13 +4,114 @@ import { SlideItem } from "../types";
 import { Copy, Clipboard, Play, BookOpen, ExternalLink, Calendar, Check } from "lucide-react";
 import { copyToClipboard } from "../utils";
 
+export interface SlideTheme {
+  id: string;
+  name: string;
+  bg: string;
+  border: string;
+  titleColor: string;
+  textColor: string;
+  accentBg: string;
+  accentText: string;
+  accentBar: string;
+  decoration: string;
+}
+
+export const slideThemes: SlideTheme[] = [
+  {
+    id: "business",
+    name: "卓越商务蓝 (Corporate Navy)",
+    bg: "bg-gradient-to-br from-[#f8fafc] to-[#eff6ff]",
+    border: "border-blue-200/60",
+    titleColor: "text-blue-900 font-sans font-extrabold",
+    textColor: "text-slate-600 font-medium",
+    accentBg: "bg-blue-600",
+    accentText: "text-blue-600",
+    accentBar: "border-l-4 border-blue-600 bg-blue-50/70 p-1.5 pl-2.5 rounded-r",
+    decoration: "absolute right-0 bottom-0 w-20 h-20 bg-blue-500/[0.04] rounded-tl-full pointer-events-none"
+  },
+  {
+    id: "cyber",
+    name: "数字科技玄 (Digital Tech)",
+    bg: "bg-[#0b0f19]",
+    border: "border-cyan-500/20",
+    titleColor: "text-cyan-400 font-mono font-bold tracking-tight",
+    textColor: "text-slate-300 font-mono",
+    accentBg: "bg-cyan-500",
+    accentText: "text-cyan-400",
+    accentBar: "border-l-2 border-cyan-400 bg-cyan-950/40 p-1.5 pl-2 rounded",
+    decoration: "absolute right-3 top-3 w-4 h-4 border border-cyan-400/10 rounded-full animate-pulse flex items-center justify-center pointer-events-none"
+  },
+  {
+    id: "editorial",
+    name: "文雅黑金 (Warm Editorial)",
+    bg: "bg-[#fdfcf7]",
+    border: "border-amber-200/50",
+    titleColor: "text-stone-900 font-serif font-bold italic tracking-wide",
+    textColor: "text-stone-700 font-serif",
+    accentBg: "bg-amber-800",
+    accentText: "text-amber-800",
+    accentBar: "border-l-2 border-amber-600 bg-amber-500/[0.05] p-1.5 pl-2.5",
+    decoration: "absolute left-0 top-0 w-1 h-full bg-amber-800/15 pointer-events-none"
+  },
+  {
+    id: "emerald",
+    name: "轻氧原木绿 (Emerald Sage)",
+    bg: "bg-gradient-to-br from-[#f4fbf7] to-[#ecfdf5]",
+    border: "border-emerald-200/40",
+    titleColor: "text-emerald-950 font-sans font-bold",
+    textColor: "text-emerald-900/70 font-sans",
+    accentBg: "bg-emerald-600",
+    accentText: "text-emerald-700",
+    accentBar: "border-l-2 border-emerald-500 bg-emerald-100/40 p-1.5 pl-2.5 rounded",
+    decoration: "absolute bottom-0 left-0 right-0 h-1.5 bg-emerald-600/20 pointer-events-none"
+  },
+  {
+    id: "luxury",
+    name: "尊享皇家金 (Imperial Gold)",
+    bg: "bg-zinc-950",
+    border: "border-yellow-500/20",
+    titleColor: "text-[#fbbf24] font-sans font-black uppercase tracking-wide",
+    textColor: "text-zinc-300 font-sans",
+    accentBg: "bg-[#fbbf24]",
+    accentText: "text-yellow-400",
+    accentBar: "border-r-2 border-yellow-500 bg-yellow-500/[0.04] p-1.5 pr-2.5 text-right",
+    decoration: "absolute right-3 bottom-3 w-10 h-10 border border-yellow-500/10 rounded-tr-3xl pointer-events-none"
+  },
+  {
+    id: "coral",
+    name: "浪漫珊瑚橘 (Coral Bloom)",
+    bg: "bg-gradient-to-tr from-[#fffafb] to-[#fff1f2]",
+    border: "border-rose-200/40",
+    titleColor: "text-rose-950 font-sans font-extrabold",
+    textColor: "text-slate-600 font-sans",
+    accentBg: "bg-rose-500",
+    accentText: "text-rose-600",
+    accentBar: "border-l-2 border-rose-500 bg-rose-50 pr-2 pl-2 rounded-r",
+    decoration: "absolute top-0 right-0 w-12 h-12 bg-rose-200/[0.08] rounded-bl-full pointer-events-none"
+  }
+];
+
+export function getDeterministicTheme(slideId: string, customThemeId?: string): SlideTheme {
+  if (customThemeId && customThemeId !== "random") {
+    const matched = slideThemes.find(t => t.id === customThemeId);
+    if (matched) return matched;
+  }
+  
+  const hash = Array.from(slideId || "").reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  const themeIndex = Math.abs(hash) % slideThemes.length;
+  return slideThemes[themeIndex];
+}
+
 interface SlideCardProps {
   key?: any;
   slide: SlideItem;
   onSelect: (slide: SlideItem) => void;
+  customThemeId?: string;
+  searchQuery?: string;
 }
 
-export default function SlideCard({ slide, onSelect }: SlideCardProps) {
+export default function SlideCard({ slide, onSelect, customThemeId, searchQuery }: SlideCardProps) {
   const [copied, setCopied] = useState(false);
   const [runningScript, setRunningScript] = useState<string | null>(null);
 
@@ -68,6 +169,27 @@ export default function SlideCard({ slide, onSelect }: SlideCardProps) {
     }
   };
 
+  const theme = getDeterministicTheme(slide.id, customThemeId);
+
+  // Highlighting of search terms inside slide mockup
+  const renderHighlightedText = (text: string, highlight?: string) => {
+    if (!highlight || !text) return text;
+    const parts = text.split(new RegExp(`(${highlight.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')})`, "gi"));
+    return (
+      <>
+        {parts.map((p, idx) => 
+          p.toLowerCase() === highlight.toLowerCase() ? (
+            <mark key={idx} className="bg-yellow-400/45 text-rose-950 font-extrabold px-0.5 rounded shadow-sm">
+              {p}
+            </mark>
+          ) : (
+            p
+          )
+        )}
+      </>
+    );
+  };
+
   return (
     <motion.div
       layout
@@ -76,40 +198,48 @@ export default function SlideCard({ slide, onSelect }: SlideCardProps) {
       className="group relative flex flex-col overflow-hidden rounded-xl border border-white/10 bg-slate-900 shadow-xl transition-all duration-300 hover:border-cyan-500/40 hover:shadow-cyan-500/5 cursor-pointer"
       onClick={() => onSelect(slide)}
     >
-      {/* 1. Miniature 16:9 Presentation Canvas Visual */}
-      <div className="relative aspect-[16/9] w-full overflow-hidden bg-slate-100 p-4 select-none flex flex-col justify-between">
+      {/* 1. Miniature 16:9 Presentation Canvas Visual (Slide Multi-Theme Thumbnail) */}
+      <div className={`relative aspect-[16/9] w-full overflow-hidden p-4 select-none flex flex-col justify-between transition-colors duration-500 ${theme.bg} border-b ${theme.border}`}>
         
         {/* Subtle grid mesh decoration */}
-        <div className="absolute inset-0 bg-[linear-gradient(to_right,#8080800a_1px,transparent_1px),linear-gradient(to_bottom,#8080800a_1px,transparent_1px)] bg-[size:14px_14px] pointer-events-none" />
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808005_1px,transparent_1px),linear-gradient(to_bottom,#80808005_1px,transparent_1px)] bg-[size:10px_10px] pointer-events-none" />
+        
+        {/* Theme abstract cosmetic decoration element */}
+        <div className={theme.decoration} />
 
         {/* Presentation Header (Tag + Slide Index) */}
         <div className="relative z-10 flex items-center justify-between pointer-events-none">
-          <span className="truncate rounded bg-slate-800/80 px-2 py-0.5 text-[9px] font-bold tracking-wider text-cyan-400 font-mono uppercase">
-            {slide.documentName.split(".").pop()} Vecto-Card
+          <span className="truncate rounded-md bg-slate-800/90 px-2 py-0.5 font-mono text-[8.5px] font-bold tracking-wider text-cyan-400 uppercase border border-white/5 shadow-sm">
+            Slide {slide.slideIndex}
           </span>
-          <span className="rounded bg-slate-800/80 px-1.5 py-0.5 text-[10px] font-bold text-white font-mono">
-            {slide.slideIndex} P
-          </span>
+          <div className="flex gap-1 items-center">
+            <span className="rounded bg-slate-900/10 px-1.5 py-0.5 text-[9px] font-bold text-slate-500 font-mono">
+              模版: {theme.name.split(" ")[0]}
+            </span>
+          </div>
         </div>
 
-        {/* Presentation Slide Title */}
+        {/* Presentation Slide Title inside themed container */}
         <div className="relative z-10 my-1 pointer-events-none">
-          <h4 className="text-sm font-semibold text-slate-900 tracking-tight leading-snug line-clamp-1 font-sans">
-            {slide.title}
+          <h4 className={`text-xs md:text-[13px] font-bold tracking-tight leading-snug line-clamp-1 ${theme.titleColor}`}>
+            {renderHighlightedText(slide.title, searchQuery)}
           </h4>
+          <span className="block w-6 h-0.5 bg-current opacity-20 mt-0.5" />
         </div>
 
-        {/* Presentation Slide Main Paragraph / Content snippet */}
-        <div className="relative z-10 flex-1 pointer-events-none">
-          <p className="text-[10px] leading-relaxed text-slate-500 font-mono line-clamp-3">
-            {slide.text || "（此幻灯片正文不含文字，仅备注有内容）"}
-          </p>
+        {/* Presentation Slide Main Paragraph with elegant left border and highlighted text */}
+        <div className="relative z-10 flex-1 my-1.5 pointer-events-none flex flex-col justify-center">
+          <div className={`${theme.accentBar}`}>
+            <p className={`text-[10px] leading-relaxed line-clamp-3 font-sans ${theme.textColor}`}>
+              {renderHighlightedText(slide.text || "（此幻灯片内容主要由备注提供详细背景）", searchQuery)}
+            </p>
+          </div>
         </div>
 
-        {/* Slide Footer Decoration */}
-        <div className="relative z-10 border-t border-slate-200/50 pt-1 text-[8px] text-slate-400 font-mono flex items-center justify-between pointer-events-none">
-          <span className="truncate font-mono max-w-[160px]">{slide.documentName}</span>
-          <span className="font-mono">Slide Engine v2026</span>
+        {/* Slide Footer Decoration & Micro Page Indicator */}
+        <div className="relative z-10 border-t border-slate-300/30 pt-1 text-[8.5px] text-slate-400 font-mono flex items-center justify-between pointer-events-none">
+          <span className="truncate font-sans max-w-[140px] text-slate-500 font-medium">📂 {slide.documentName}</span>
+          <span className="font-mono text-slate-500 font-bold tracking-wide">P. {slide.slideIndex}</span>
         </div>
 
         {/* 2. Hover Parallax Frosted Acrylic Overlay Controls */}
